@@ -7,7 +7,7 @@ const initSqlJs = require('sql.js');
 const fs = require('fs');
 const path = require('path');
 
-const DB_PATH = path.join(__dirname, '..', 'pricetracker.db');
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, '..', 'pricetracker.db');
 let db = null;
 
 function saveDb() {
@@ -17,6 +17,11 @@ function saveDb() {
 
 async function initDatabase() {
   const SQL = await initSqlJs();
+  const dbDir = path.dirname(DB_PATH);
+  if (!fs.existsSync(dbDir)) {
+    fs.mkdirSync(dbDir, { recursive: true });
+  }
+
   if (fs.existsSync(DB_PATH)) {
     db = new SQL.Database(fs.readFileSync(DB_PATH));
     console.log('✅ Database loaded from', DB_PATH);
