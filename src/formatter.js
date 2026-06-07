@@ -170,36 +170,24 @@ function formatHelp() {
   return `🤖 *Price Tracker Bot*
 ━━━━━━━━━━━━━━━━━━━
 
-📦 *RECORD PURCHASE*
-\`bought cement from Raj at 380\`
-\`bought 50 bags cement from Raj at 380\`
+📦 *ADD PURCHASE (Shorthand)*
+\`jeera, Raj, 380\`
+\`50 kg pepper, SK Traders, 520\`
+
+📦 *ADD PURCHASE (Full)*
+\`bought jeera from Raj at 380\`
 
 📊 *CHECK PRICES*
-\`price cement\` — full history
-\`last cement\` — last purchase
-\`compare cement\` — best vendor
-
-📁 *CATEGORIES*
-/add\\_category Construction
-/list\\_categories
-/del\\_category Construction
-
-📦 *PRODUCTS*
-/add\\_product cement
-\`add product cement in Construction unit bag\`
-/list\\_products
-/del\\_product cement
-
-🏪 *VENDORS*
-/list\\_vendors
-\`vendor Raj Traders\` — purchases
+\`price jeera\` — full history
+\`last pepper\` — last purchase
+\`compare jeera\` — best vendor
 
 🔍 *OTHER*
-\`search cem\`
-/stats
-/help
+\`search je\` — search products
+\`vendor Raj\` — vendor history
 
 ━━━━━━━━━━━━━━━━━━━
+💡 _Use the buttons below for quick access!_
 💡 _Products & vendors are auto-created when you record a purchase!_`;
 }
 

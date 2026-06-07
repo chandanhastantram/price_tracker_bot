@@ -2,16 +2,16 @@
  * Telegram Price Tracker Bot — Main Entry Point
  * Uses Telegraf framework with the official Telegram Bot API
  *
- * Setup:
- *   1. Message @BotFather on Telegram → /newbot → copy token
- *   2. cp .env.example .env → paste token
- *   3. npm start
- *   Done! No QR codes, no sessions, works 24/7.
+ * Features:
+ *   - Persistent reply keyboard (buttons at bottom) for all actions
+ *   - Comma-shorthand purchase: "jeera, Raj, 380"
+ *   - Natural language still works: "bought jeera from Raj at 380"
+ *   - Per-user data isolation via Telegram user ID
  */
 
 require('dotenv').config();
 
-const { Telegraf } = require('telegraf');
+const { Telegraf, Markup } = require('telegraf');
 const { initDatabase } = require('./database');
 const db = require('./database');
 const fmt = require('./formatter');
@@ -25,95 +25,147 @@ if (!BOT_TOKEN) {
 
 const bot = new Telegraf(BOT_TOKEN);
 
-// ─── Helper: send reply with Markdown ─────────────────
-async function reply(ctx, text) {
+// ─── Persistent keyboard shown at bottom of every chat ──
+const MAIN_KEYBOARD = Markup.keyboard([
+  ['📊 Stats', '📋 Products'],
+  ['📁 Categories', '🏪 Vendors'],
+  ['❓ Help'],
+]).resize().persistent();
+
+// ─── Helper: send reply with Markdown + keyboard ────────
+async function reply(ctx, text, extra = {}) {
   try {
-    await ctx.reply(text, { parse_mode: 'Markdown' });
+    await ctx.reply(text, { parse_mode: 'Markdown', ...MAIN_KEYBOARD, ...extra });
   } catch {
-    // Fallback without markdown if formatting fails
-    await ctx.reply(text);
+    await ctx.reply(text, { ...MAIN_KEYBOARD, ...extra });
   }
 }
 
-// ─── Get user ID (unique per Telegram user) ────────────
+// ─── Get user ID ────────────────────────────────────────
 function userId(ctx) {
   return String(ctx.from.id);
 }
 
-// ─── /start and /help ─────────────────────────────────
+// ─── /start ─────────────────────────────────────────────
 bot.start(async (ctx) => {
-  await reply(ctx, `👋 Welcome, *${ctx.from.first_name}*!\n\n` + fmt.formatHelp());
+  await reply(ctx,
+    `👋 Welcome, *${ctx.from.first_name}*!\n\n` +
+    `I track product prices for you.\n\n` +
+    `*Quick Start — just type:*\n` +
+    `\`jeera, Raj, 380\`\n` +
+    `\`50 kg pepper, SK Traders, 520\`\n\n` +
+    `Format: \`product, vendor, price\`\n\n` +
+    `Use the buttons below to view your data! 👇`
+  );
 });
 
+// ─── /help ──────────────────────────────────────────────
 bot.help(async (ctx) => {
   await reply(ctx, fmt.formatHelp());
 });
 
-// ─── /stats ───────────────────────────────────────────
+// ─── Button: ❓ Help ─────────────────────────────────────
+bot.hears('❓ Help', async (ctx) => {
+  await reply(ctx, fmt.formatHelp());
+});
+
+// ─── Button: 📊 Stats ───────────────────────────────────
+bot.hears('📊 Stats', async (ctx) => {
+  await reply(ctx, fmt.formatStats(db.getStats(userId(ctx))));
+});
 bot.command('stats', async (ctx) => {
   await reply(ctx, fmt.formatStats(db.getStats(userId(ctx))));
 });
 
-// ─── CATEGORIES ───────────────────────────────────────
-bot.command('add_category', async (ctx) => {
-  const name = ctx.message.text.replace(/^\/add_category\s*/i, '').trim();
-  if (!name) return reply(ctx, '⚠️ Usage: /add\\_category *Construction*');
-  const result = db.addCategory(name, userId(ctx));
-  if (!result.success) return reply(ctx, `⚠️ ${result.message}`);
-  await reply(ctx, `✅ Category *"${result.name}"* created!`);
+// ─── Button: 📋 Products ────────────────────────────────
+bot.hears('📋 Products', async (ctx) => {
+  await reply(ctx, fmt.formatProductList(db.listProducts(null, userId(ctx)), null));
 });
-
-bot.command('list_categories', async (ctx) => {
-  await reply(ctx, fmt.formatCategoryList(db.listCategories(userId(ctx))));
-});
-
-bot.command('del_category', async (ctx) => {
-  const name = ctx.message.text.replace(/^\/del_category\s*/i, '').trim();
-  if (!name) return reply(ctx, '⚠️ Usage: /del\\_category *Construction*');
-  const result = db.deleteCategory(name, userId(ctx));
-  if (!result.success) return reply(ctx, `⚠️ ${result.message}`);
-  await reply(ctx, `🗑️ Category *"${result.name}"* deleted.`);
-});
-
-// ─── PRODUCTS ─────────────────────────────────────────
 bot.command('list_products', async (ctx) => {
   const cat = ctx.message.text.replace(/^\/list_products\s*/i, '').trim() || null;
   await reply(ctx, fmt.formatProductList(db.listProducts(cat, userId(ctx)), cat));
 });
 
-bot.command('add_product', async (ctx) => {
-  const args = ctx.message.text.replace(/^\/add_product\s*/i, '').trim();
-  if (!args) return reply(ctx, '⚠️ Usage: /add\\_product cement\nor: `add product cement in Construction unit bag`');
-  const result = db.addProduct(args, null, null, userId(ctx));
+// ─── Button: 📁 Categories ──────────────────────────────
+bot.hears('📁 Categories', async (ctx) => {
+  await reply(
+    ctx,
+    fmt.formatCategoryList(db.listCategories(userId(ctx))) +
+    '\n\n_To add: type_ `add category Spices`\n_To delete: type_ `del category Spices`'
+  );
+});
+bot.command('list_categories', async (ctx) => {
+  await reply(ctx, fmt.formatCategoryList(db.listCategories(userId(ctx))));
+});
+bot.command('add_category', async (ctx) => {
+  const name = ctx.message.text.replace(/^\/add_category\s*/i, '').trim();
+  if (!name) return reply(ctx, '⚠️ Type the category name after the command.\nExample: `/add_category Spices`');
+  const result = db.addCategory(name, userId(ctx));
   if (!result.success) return reply(ctx, `⚠️ ${result.message}`);
-  let msg = `✅ Product *"${result.name}"* added!`;
-  if (result.unit !== 'piece') msg += `\n📏 Unit: ${result.unit}`;
-  msg += `\n\nRecord a purchase:\n\`bought ${result.name} from <vendor> at <price>\``;
-  await reply(ctx, msg);
+  await reply(ctx, `✅ Category *"${result.name}"* created!`);
+});
+bot.command('del_category', async (ctx) => {
+  const name = ctx.message.text.replace(/^\/del_category\s*/i, '').trim();
+  if (!name) return reply(ctx, '⚠️ Type the category name after the command.\nExample: `/del_category Spices`');
+  const result = db.deleteCategory(name, userId(ctx));
+  if (!result.success) return reply(ctx, `⚠️ ${result.message}`);
+  await reply(ctx, `🗑️ Category *"${result.name}"* deleted.`);
 });
 
+// ─── Button: 🏪 Vendors ─────────────────────────────────
+bot.hears('🏪 Vendors', async (ctx) => {
+  await reply(
+    ctx,
+    fmt.formatVendorList(db.listVendors(userId(ctx))) +
+    '\n\n_To view a vendor\'s purchases: type_ `vendor Raj`'
+  );
+});
+bot.command('list_vendors', async (ctx) => {
+  await reply(ctx, fmt.formatVendorList(db.listVendors(userId(ctx))));
+});
+
+// ─── /del_product ───────────────────────────────────────
 bot.command('del_product', async (ctx) => {
   const name = ctx.message.text.replace(/^\/del_product\s*/i, '').trim();
-  if (!name) return reply(ctx, '⚠️ Usage: /del\\_product cement');
+  if (!name) return reply(ctx, '⚠️ Type the product name.\nExample: `/del_product jeera`');
   const result = db.deleteProduct(name, userId(ctx));
   if (!result.success) return reply(ctx, `⚠️ ${result.message}`);
   await reply(ctx, `🗑️ Product *"${result.name}"* and all its records deleted.`);
 });
 
-// ─── VENDORS ──────────────────────────────────────────
-bot.command('list_vendors', async (ctx) => {
-  await reply(ctx, fmt.formatVendorList(db.listVendors(userId(ctx))));
-});
-
-// ─── FREE TEXT COMMANDS ───────────────────────────────
-// All natural language commands (bought, price, compare, etc.)
+// ─── FREE TEXT handler ──────────────────────────────────
+// Handles: comma-shorthand, natural language, price checks, etc.
 bot.on('text', async (ctx) => {
   const text = ctx.message.text.trim();
   const lower = text.toLowerCase();
   const uid = userId(ctx);
 
   try {
-    // ── ADD CATEGORY ──────────────────────────
+
+    // ── COMMA SHORTHAND: "jeera, Raj, 380" or "50 kg jeera, Raj, 380" ──
+    // Format: [qty unit] product, vendor, price [notes]
+    const commaMatch = text.match(
+      /^(?:(\d+(?:\.\d+)?)\s+(\w+)\s+)?([^,]+),\s*([^,]+),\s*(\d+(?:\.\d+)?)\s*(.*)$/
+    );
+    if (commaMatch && !lower.startsWith('add ') && !lower.startsWith('del ') &&
+        !lower.startsWith('search ') && !lower.startsWith('find ') &&
+        !lower.startsWith('vendor ') && !lower.startsWith('compare ') &&
+        !lower.startsWith('price ') && !lower.startsWith('last ') &&
+        !lower.startsWith('set ') && !lower.startsWith('update ') &&
+        !lower.startsWith('bought ') && !lower.startsWith('purchased ')) {
+      const quantity = commaMatch[1] ? parseFloat(commaMatch[1]) : 1;
+      const unit = commaMatch[2] || null;
+      const productName = commaMatch[3].trim();
+      const vendorName = commaMatch[4].trim();
+      const price = parseFloat(commaMatch[5]);
+      const notes = commaMatch[6]?.trim() || null;
+      if (!isNaN(price) && price > 0 && productName && vendorName) {
+        const result = db.recordPurchase(productName, vendorName, price, quantity, unit, notes, uid);
+        return reply(ctx, fmt.formatPurchaseConfirmation(result));
+      }
+    }
+
+    // ── ADD CATEGORY ───────────────────────────────────
     const addCatMatch = text.match(/^add\s+cat(?:egory)?\s+(.+)$/i);
     if (addCatMatch) {
       const result = db.addCategory(addCatMatch[1].trim(), uid);
@@ -121,22 +173,15 @@ bot.on('text', async (ctx) => {
       return reply(ctx, `✅ Category *"${result.name}"* created!`);
     }
 
-    // ── ADD PRODUCT (natural language) ────────
-    const addProdMatch = text.match(/^add\s+(?:product\s+)?(.+?)(?:\s+in\s+(.+?))?(?:\s+unit\s+(.+?))?$/i);
-    if (addProdMatch && !/^(cat|vendor|category)/i.test(addProdMatch[1])) {
-      const name = addProdMatch[1].trim();
-      const category = addProdMatch[2]?.trim() || null;
-      const unit = addProdMatch[3]?.trim() || null;
-      const result = db.addProduct(name, category, unit, uid);
+    // ── DELETE CATEGORY ────────────────────────────────
+    const delCatMatch = text.match(/^del(?:ete)?\s+cat(?:egory)?\s+(.+)$/i);
+    if (delCatMatch) {
+      const result = db.deleteCategory(delCatMatch[1].trim(), uid);
       if (!result.success) return reply(ctx, `⚠️ ${result.message}`);
-      let msg = `✅ Product *"${result.name}"* added!`;
-      if (result.category) msg += `\n📁 Category: ${result.category}`;
-      if (result.unit !== 'piece') msg += `\n📏 Unit: ${result.unit}`;
-      msg += `\n\nRecord a purchase:\n\`bought ${result.name} from <vendor> at <price>\``;
-      return reply(ctx, msg);
+      return reply(ctx, `🗑️ Category *"${result.name}"* deleted.`);
     }
 
-    // ── RECORD PURCHASE ───────────────────────
+    // ── NATURAL LANGUAGE PURCHASE ──────────────────────
     const purchaseMatch = text.match(
       /^(?:bought|purchased|buy)\s+(?:(\d+(?:\.\d+)?)\s*(\w+)\s+)?(.+?)\s+from\s+(.+?)\s+(?:at|@|for)\s+(\d+(?:\.\d+)?)\s*(.*)$/i
     );
@@ -147,12 +192,12 @@ bot.on('text', async (ctx) => {
       const vendorName = purchaseMatch[4].trim();
       const price = parseFloat(purchaseMatch[5]);
       const notes = purchaseMatch[6]?.trim() || null;
-      if (isNaN(price) || price <= 0) return reply(ctx, '⚠️ Invalid price.\nExample: `bought cement from Raj at 380`');
+      if (isNaN(price) || price <= 0) return reply(ctx, '⚠️ Invalid price.\nExample: `jeera, Raj, 380`');
       const result = db.recordPurchase(productName, vendorName, price, quantity, unit, notes, uid);
       return reply(ctx, fmt.formatPurchaseConfirmation(result));
     }
 
-    // ── LAST PRICE ────────────────────────────
+    // ── LAST PRICE ─────────────────────────────────────
     const lastMatch = text.match(/^last\s+(.+)$/i);
     if (lastMatch) {
       const last = db.getLastPrice(lastMatch[1].trim(), uid);
@@ -160,7 +205,7 @@ bot.on('text', async (ctx) => {
       return reply(ctx, `🔵 *Last Purchase — ${last.product_name}*\n\n💰 ${fmt.formatPrice(last.price)}/${last.unit || 'piece'}\n🏪 ${last.vendor_name}\n📅 ${fmt.formatDate(last.purchased_at)}`);
     }
 
-    // ── COMPARE / CHEAPEST ────────────────────
+    // ── COMPARE / CHEAPEST ─────────────────────────────
     const compareMatch = text.match(/^(?:compare|cheapest|best\s+price)\s+(.+)$/i);
     if (compareMatch) {
       const result = db.getCheapestVendor(compareMatch[1].trim(), uid);
@@ -168,7 +213,7 @@ bot.on('text', async (ctx) => {
       return reply(ctx, fmt.formatCheapestVendor(result.product, result.vendors));
     }
 
-    // ── VENDOR PURCHASES ──────────────────────
+    // ── VENDOR PURCHASES ───────────────────────────────
     const vendorMatch = text.match(/^vendor\s+(.+)$/i);
     if (vendorMatch) {
       const { vendor, purchases } = db.getVendorPurchases(vendorMatch[1].trim(), uid);
@@ -176,13 +221,13 @@ bot.on('text', async (ctx) => {
       return reply(ctx, fmt.formatVendorPurchases(vendor, purchases));
     }
 
-    // ── SEARCH ────────────────────────────────
+    // ── SEARCH ─────────────────────────────────────────
     const searchMatch = text.match(/^(?:search|find)\s+(.+)$/i);
     if (searchMatch) {
       return reply(ctx, fmt.formatSearchResults(searchMatch[1], db.searchProducts(searchMatch[1], uid)));
     }
 
-    // ── UPDATE UNIT ───────────────────────────
+    // ── UPDATE UNIT ────────────────────────────────────
     const unitMatch = text.match(/^(?:set|update)\s+unit\s+(?:of\s+)?(.+?)\s+(?:to|as)\s+(.+)$/i);
     if (unitMatch) {
       const result = db.updateProductUnit(unitMatch[1], unitMatch[2], uid);
@@ -190,7 +235,7 @@ bot.on('text', async (ctx) => {
       return reply(ctx, `✅ Unit for *"${result.name}"* updated to *${result.unit}*.`);
     }
 
-    // ── DELETE PRODUCT ────────────────────────
+    // ── DELETE PRODUCT ─────────────────────────────────
     const delProdMatch = text.match(/^del(?:ete)?\s+(?:product\s+)?(.+)$/i);
     if (delProdMatch && !/^(cat|purchase)/i.test(delProdMatch[1])) {
       const result = db.deleteProduct(delProdMatch[1].trim(), uid);
@@ -198,32 +243,37 @@ bot.on('text', async (ctx) => {
       return reply(ctx, `🗑️ Product *"${result.name}"* deleted.`);
     }
 
-    // ── PRICE HISTORY (explicit) ──────────────
+    // ── PRICE HISTORY (prefix: "price jeera") ─────────
     const priceExMatch = text.match(/^price(?:\s+of)?\s+(.+)$/i);
     if (priceExMatch) {
       const { product, history } = db.getPriceHistory(priceExMatch[1].trim(), uid);
-      if (!product) return reply(ctx, `⚠️ Product *"${priceExMatch[1].trim()}"* not found.\n\nAdd it: \`add product ${priceExMatch[1].trim()}\``);
+      if (!product) return reply(ctx, `⚠️ Product *"${priceExMatch[1].trim()}"* not found.\n\nRecord a purchase first:\n\`${priceExMatch[1].trim()}, YourVendor, 100\``);
       return reply(ctx, fmt.formatPriceHistory(product.name, history));
     }
 
-    // ── PRICE HISTORY (suffix: "cement price?") ──
+    // ── PRICE HISTORY (suffix: "jeera price?") ────────
     const priceSufMatch = text.match(/^(.+?)\s+price\??\s*$/i);
     if (priceSufMatch) {
       const pn = priceSufMatch[1].trim();
       if (!/^(help|hi|hello|stats|list|add|del|bought|search|vendor|compare|last|set|update|find)$/i.test(pn)) {
         const { product, history } = db.getPriceHistory(pn, uid);
-        if (!product) return reply(ctx, `⚠️ Product *"${pn}"* not found.\n\nAdd it: \`add product ${pn}\``);
-        return reply(ctx, fmt.formatPriceHistory(product.name, history));
+        if (product) return reply(ctx, fmt.formatPriceHistory(product.name, history));
       }
     }
 
-    // ── GREETING ─────────────────────────────
+    // ── GREETING ───────────────────────────────────────
     if (/^(hi|hello|hey|start|\?)$/i.test(lower)) {
       return reply(ctx, fmt.formatHelp());
     }
 
-    // ── FALLBACK ─────────────────────────────
-    await reply(ctx, `🤔 I didn't understand that.\n\nTry:\n• \`bought cement from Raj at 380\`\n• \`price cement\`\n• /help`);
+    // ── FALLBACK ───────────────────────────────────────
+    await reply(ctx,
+      `🤔 I didn't understand that.\n\n` +
+      `*To record a purchase, type:*\n` +
+      `\`jeera, Raj, 380\`\n` +
+      `\`50 kg pepper, SK Traders, 520\`\n\n` +
+      `Use the buttons below for other options 👇`
+    );
 
   } catch (error) {
     console.error('❌ Error:', error.message);
@@ -231,12 +281,12 @@ bot.on('text', async (ctx) => {
   }
 });
 
-// ─── Error Handler ─────────────────────────────────────
+// ─── Error Handler ──────────────────────────────────────
 bot.catch((err, ctx) => {
   console.error('❌ Bot error:', err.message);
 });
 
-// ─── Start ─────────────────────────────────────────────
+// ─── Start ──────────────────────────────────────────────
 async function start() {
   console.log(`
 ╔═══════════════════════════════════════════════╗
